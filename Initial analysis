@@ -1,0 +1,512 @@
+rm(list = ls())
+
+
+library(phyloseq)
+library(ggplot2)
+library(vegan)
+library(dplyr)
+
+
+load("Puja_Scoop-phyloseq-object.RData")
+load("Puja_Scoop-sample-data-object.RData")
+load("Puja_Scoop-seqtabnochim.RData")
+load ("Puja_Scoop-tax-table-object.RData")
+load("Puja_Scoop-tree-object.RData")
+
+ls() # Check the name of the loaded object
+
+sample_names(phy) # List sample names
+rank_names(phy)   # Taxonomic ranks available
+sample_variables(phy) # Metadata variables
+
+#conversion to data frames for easy viewing
+otu_table_df <- as.data.frame(otu_table(phy)) # Convert to a data frame
+tax_table_df <- as.data.frame(tax_table(phy)) # Convert to a data frame
+sample_data_df <- as.data.frame(sample_data(phy)) # Convert to a data frame
+
+
+# Remove the 'project.name' column #unnecessary column removal
+sample_data_df <- sample_data_df[, !(names(sample_data_df) %in% "project.name")]
+
+#>>>>REMOVE specific rows
+# Extract treatment and timepoint from sample.id
+sample_data_df$treatment <- sub("_.*", "", sample_data_df$sample.id) # Extract treatment (e.g., AE, AN, etc.)
+sample_data_df$timepoint <- sub(".*_(T\\d+)$", "\\1", sample_data_df$sample.id) # Extract timepoint (e.g., T1, T2, etc.)
+
+# Reorganize the data frame by treatment and timepoint
+sample_data_df <- sample_data_df[order(sample_data_df$treatment, sample_data_df$timepoint), ]
+
+# Define the sample IDs to remove, i wanted to not count the Solids now
+rows_to_remove <- c("SLS_A_T1_SO", "SLS_B_T1_SO", "SLS_C_T1_SO")
+
+# Remove the rows from the data frame
+sample_data_df <- sample_data_df[!sample_data_df$sample.id %in% rows_to_remove, ]
+#>>>>END OF REMOVE specific rows
+
+#alpha diversity plots
+
+# Create alpha diversity plot for Shannon
+ggplot(sample_data_df, aes(x = treatment, y = shan.16s, fill = treatment)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.2, alpha = 0.6) +
+  labs(title = "Alpha Diversity (Shannon Index)", x = "Treatment", y = "Shannon Index") +
+  theme_minimal()
+
+
+library(ggplot2)
+
+# Add a column to distinguish "No Treatment" from other treatments
+sample_data_df$facet_group <- ifelse(sample_data_df$treatment == "NT", "No Treatment", sample_data_df$treatment)
+
+# Reorder the facets to place "No Treatment (NT)" first
+sample_data_df$facet_group <- factor(sample_data_df$facet_group, levels = c("No Treatment", "AE", "AN", "HT", "LIM", "SLS"))
+
+# Plot with facets
+library(ggplot2)
+
+# Add a column to distinguish "No Treatment" from other treatments
+sample_data_df$facet_group <- ifelse(sample_data_df$treatment == "NT", "No Treatment (NT)", sample_data_df$treatment)
+
+# Reorder the facets to place "No Treatment (NT)" first
+sample_data_df$facet_group <- factor(sample_data_df$facet_group, levels = c("No Treatment (NT)", "AE", "AN", "HT", "LIM", "SLS"))
+
+# Plot with facets
+ggplot(sample_data_df, aes(x = timepoint, y = shan.16s, fill = timepoint)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.2, alpha = 0.6) +
+  labs(title = "Alpha Diversity (Shannon Index)", 
+       subtitle = "T1: Treatment | T2-T5: Storage Timepoints",  # Add description as a subtitle
+       x = "Timepoint", y = "Shannon Index") +
+  facet_wrap(~ facet_group, ncol = 6, scales = "free_x") +  # Facet by NT and treatments
+  theme_minimal() +
+  theme(
+    strip.text = element_text(size = 12, face = "bold"),      # Style facet labels
+    panel.border = element_rect(color = "black", fill = NA)  # Add black border around facets
+  )
+
+# Save the faceted Shannon plot to a PNG file
+ggsave(
+  filename = "Shannon_Index_Facets.jpg",    # File name
+  plot = last_plot(),                       # Use the last created ggplot object
+  width = 10,                               # Width of the plot in inches
+  height = 7,                               # Height of the plot in inches
+  dpi = 300                                 # Resolution of the image in DPI
+)
+
+
+class(sample_data_df)  # Should return "data.frame"
+
+# Convert sample_data to a proper data frame,This approach forces the sample_data to become a standard data.frame.
+sample_data_df <- data.frame(sample_data(phy))
+
+class(sample_data_df)  # Should now return "data.frame"
+
+
+#check for normality
+#by visualization 
+# Plot histogram
+ggplot(sample_data_df, aes(x = shan.16s)) +
+  geom_histogram(binwidth = 0.2, color = "black", fill = "blue", alpha = 0.7) +
+  labs(title = "Histogram of Shannon Index", x = "Shannon Index", y = "Frequency") +
+  theme_minimal()
+
+# Q-Q plot
+#A Q-Q plot compares the quantiles of your data to a theoretical normal distribution. If the points lie roughly on a straight diagonal line, the data is approximately normal.
+qqnorm(sample_data_df$shan.16s)
+qqline(sample_data_df$shan.16s, col = "red", lwd = 2)
+
+#by statistic test
+shapiro.test(sample_data_df$shan.16s)
+#p-value: If p > 0.05, the data is approximately normal, here the W = 0.9675, p-value = 0.04364
+
+#Kolmogorov-Smirnov Test
+#Note: This test is sensitive to sample size and might flag minor deviations in large datasets.
+ks.test(sample_data_df$shan.16s, "pnorm", mean = mean(sample_data_df$shan.16s, na.rm = TRUE), sd = sd(sample_data_df$shan.16s, na.rm = TRUE))
+
+#Since the p-value (0.1303) > 0.05, you fail to reject the null hypothesis, which states that your data follows a normal distribution.
+
+#anderson-darling tests (A-D test)
+#Available in the nortest package, this is a more robust test for normality.
+install.packages("nortest")
+library(nortest)
+ad.test(sample_data_df$shan.16s)
+
+#Test Statistic (A):
+#A = 0.9964: This is the Anderson-Darling test statistic, which quantifies the deviation of your data from a normal distribution. A higher value indicates a greater deviation from normality.
+#P-value (p-value = 0.01188):
+#A p-value < 0.05 indicates that your data significantly deviates from a normal distribution. In this case, you reject the null hypothesis of normality.
+
+
+#so we should not do parametric test.
+
+
+kruskal.test(shan.16s ~ treatment, data = sample_data_df)
+kruskal.test(shan.16s ~ timepoint, data = sample_data_df)
+#Kruskal-Wallis rank sum test
+
+#data:  shan.16s by treatment
+#K#ruskal-Wallis chi-squared = 53.4, df = 5, p-value = 2.784e-10
+
+pairwise.wilcox.test(sample_data_df$shan.16s, sample_data_df$treatment, p.adjust.method = "BH")
+#Since you are performing multiple pairwise tests, adjust the p-values to control for false discovery rates (e.g., using the Benjamini-Hochberg method, BH):
+    #AE      AN      HT      LIM     NT     
+#AN  0.00024 -       -       -       -      
+#HT  0.04392 0.04942 -       -       -      
+#LIM 0.00018 9.7e-08 2.5e-05 -       -      
+#NT  0.12561 0.00460 0.05348 0.14989 -      
+#SLS 4.7e-05 9.7e-08 6.3e-06 0.30459 0.17595
+
+#>>>>>>>>LETS PUT AN ASTERISK
+# Perform pairwise Wilcoxon test
+pairwise_result <- pairwise.wilcox.test(sample_data_df$shan.16s, sample_data_df$treatment, p.adjust.method = "BH")
+
+# Extract p-value matrix
+p_matrix <- pairwise_result$p.value
+
+# Define a function to convert p-values to significance levels
+p_to_significance <- function(p) {
+  if (is.na(p)) return("")          # Handle NA values
+  else if (p <= 0.001) return("***")
+  else if (p <= 0.01) return("**")
+  else if (p <= 0.05) return("*")
+  else return("")                   # Not significant
+}
+
+# Apply the function to the matrix
+significance_matrix <- apply(p_matrix, c(1, 2), p_to_significance)
+
+# View the matrix with asterisks
+print(significance_matrix)
+#>>>>>>>>END  OF ASTERISK
+
+
+
+#Since you are performing multiple pairwise tests, adjust the p-values to control for false discovery rates (e.g., using the Benjamini-Hochberg method):
+p_values_df$Adjusted_P <- p.adjust(p_values_df$P_value, method = "BH")
+print(p_values_df)
+
+
+# Create alpha diversity plot for Richness
+ggplot(sample_data_df, aes(x = treatment, y = rich.16s, fill = treatment)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.2, alpha = 0.6) +
+  labs(title = "Alpha Diversity (Richness)", x = "Treatment", y = "Richness") +
+  theme_minimal()
+
+
+# Create alpha diversity plot for ENS
+ggplot(sample_data_df, aes(x = treatment, y = ens.16s, fill = timepoint)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.2, alpha = 0.6) +
+  labs(title = "Alpha Diversity (ENS)", x = "Treatment", y = "Effective Number of Species (ENS)") +
+  theme_minimal()
+
+
+#Since the treatment and timepoint variables were added later, we need to make sure that the updated sample_data_df is properly linked back to the phyloseq object. Here's how you can resolve this and ensure everything works correctly
+# Ensure the row names of sample_data_df match the sample names in phy
+rownames(sample_data_df) <- sample_data_df$sample.id
+
+# Assign the updated metadata back to the phyloseq object
+sample_data(phy) <- sample_data(sample_data_df)
+
+
+#Confirm that treatment and timepoint are now part of the metadata in the phyloseq object
+# List all sample variables in phyloseq
+sample_variables(phy)
+
+# View the updated metadata
+sample_data(phy)
+
+
+
+#BETA diversity (PCOA)
+# Calculate Bray-Curtis distance
+bray_dist <- phyloseq::distance(phy, method = "bray")
+
+# Perform PCoA ordination
+ordination_pcoa <- ordinate(phy, method = "PCoA", distance = bray_dist)
+
+# Plot PCoA results
+plot_ordination(phy, ordination_pcoa, color = "treatment", shape = "timepoint") +
+  ggtitle("PCoA of Beta Diversity (Bray-Curtis)") +
+  theme_minimal()
+
+
+#BETA diversity (NMDS)
+
+# Calculate Bray-Curtis distance matrix
+bray_dist <- distance(phy, method = "bray")
+# Perform NMDS
+ordination_nmds <- ordinate(phy, method = "NMDS", distance = "bray")
+
+# Plot the NMDS ordination
+plot_ordination(phy, ordination_nmds, color = "treatment", shape = "timepoint") +
+  ggtitle("NMDS of Beta Diversity (Bray-Curtis)") +
+  theme_minimal()
+
+ordination_nmds$stress
+#we got 0.10, its a good fit, the ordination represents the data well, with MINOR distortions
+
+# Convex hull plotting function,WERID FOR NOW
+plot_ordination(phy, ordination_nmds, color = "treatment", shape = "timepoint") +
+  geom_polygon(data = NULL, aes(fill = treatment, group = treatment), alpha = 0.2) +
+  ggtitle("NMDS with Convex Hulls (Bray-Curtis)") +
+  theme_minimal()
+
+
+#STATISTICS
+library(vegan)
+
+#To ensure that bray_dist does not contain the samples you removed from sample_data_df, subset the distance matrix to exclude those samples:
+# Define the samples to remove
+samples_to_remove <- c("SLS_A_T1_SO", "SLS_B_T1_SO", "SLS_C_T1_SO")
+
+# Convert bray_dist to a matrix, remove the rows/columns, then convert back to dist
+bray_dist <- as.dist(as.matrix(bray_dist)[!rownames(as.matrix(bray_dist)) %in% samples_to_remove, 
+                                          !colnames(as.matrix(bray_dist)) %in% samples_to_remove])
+
+
+identical(rownames(sample_data_df), attr(bray_dist, "Labels"))  # Should return TRUE
+
+
+# Ensure sample_data_df is a data frame
+sample_data_df <- as.data.frame(sample_data(phy))
+head(sample_data_df)
+
+adonis2(bray_dist ~ treatment, data = sample_data_df, permutations = 999)
+
+
+##########TOP 20 TAXA 
+library(phyloseq)
+library(ggplot2)
+library(dplyr)
+
+# Transform to relative abundance (%)
+physeq <- phy
+physeq_rel <- transform_sample_counts(physeq, function(x) x / sum(x) * 100)
+
+
+# Aggregate to Phylum level
+physeq_phylum <- tax_glom(physeq_rel, taxrank = "phylum")
+
+# Convert to long format
+phylum_data <- psmelt(physeq_phylum)
+
+# Calculate mean abundance for each Phylum and select top 10
+top_20_phyla <- phylum_data %>%
+  group_by(phylum) %>%
+  summarize(mean_abundance = mean(Abundance, na.rm = TRUE)) %>%
+  arrange(desc(mean_abundance)) %>%
+  slice_head(n = 10) %>%
+  pull(phylum)
+
+# Filter the data to include only the top 10 phyla
+top10_phylum_data <- phylum_data %>% filter(phylum %in% top_10_phyla)
+
+# Plot relative abundance of top 10 phyla
+ggplot(top10_phylum_data, aes(x = Sample, y = Abundance, fill = phylum)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(title = "Top 10 Dominant Phyla by Sample",
+       x = "Sample",
+       y = "Relative Abundance (%)",
+       fill = "phylum") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+
+###########>>>>>>>>>>>
+
+
+# Extract the timepoint from the Sample column
+top10_phylum_data <- top10_phylum_data %>%
+   mutate(
+    timepoint = sub(".*_(T[0-9]+)$", "\\1", Sample),  # Extract T1, T2, etc.
+    replicate = sub(".*_(T[0-9]+)_.*$", "\\1", Sample)  # Extract replicate if needed
+  )
+
+# Order Sample column by timepoint first, then replicate
+top10_phylum_data <- top10_phylum_data %>%
+  arrange(treatment, timepoint, Sample)  # Sort by treatment, timepoint, and Sample
+
+# Re-factor the Sample column based on the new order
+top10_phylum_data$Sample <- factor(top10_phylum_data$Sample, levels = unique(top10_phylum_data$Sample))
+
+# Ensure treatment is properly ordered with NT first
+top10_phylum_data$treatment <- factor(
+  top10_phylum_data$treatment,
+  levels = c("NT", setdiff(unique(top10_phylum_data$treatment), "NT"))
+)
+
+# Plot faceted by treatment
+phylum_plot <- ggplot(top10_phylum_data, aes(x = Sample, y = Abundance, fill = phylum)) +
+  geom_bar(stat = "identity", position = "stack") +
+  facet_wrap(~ treatment, scales = "free_x", ncol = 6) +  # Facet in one column
+  labs(
+    title = "Top 10 Dominant Phyla by Sample",
+    x = "Sample",
+    y = "Relative Abundance (%)",
+    fill = "phylum"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    strip.text = element_text(size = 12, face = "bold"),  # Style facet labels
+    panel.border = element_rect(color = "black", fill = NA, size = 1),  # Add black borders
+    legend.position = "bottom",  # Move legend to bottom
+    legend.title = element_text(size = 10, face = "bold"),  # Style legend title
+    legend.text = element_text(size = 9)  # Style legend text
+  )
+ #scale_fill_viridis_d(option = "inferno") # Options: "magma", "inferno", "plasma", "viridis"
+#scale_fill_brewer(palette = "RdYlGn")
+
+#scale_fill_brewer(palette = "Set3")  # Change color palette (choose from Set1, Set2, Set3)
+#You can use RColorBrewer palettes for scale_fill_brewer(). Examples include:
+#Sequential: "Blues", "Greens", "Oranges"
+#Diverging: "Spectral", "RdYlBu", "RdYlGn"
+#Qualitative: "Set1", "Set2", "Set3", "Dark2"
+# Save the plot
+ggsave(
+  filename = "Top10_Phylum_by_Treatment.jpg",  # Save as PNG
+  plot = phylum_plot,                         # Plot object
+  width = 12,                                 # Width in inches
+  height = 8,                                 # Height in inches
+  dpi = 300                                   # Resolution
+)
+
+###########>>>>>>>>>>>
+
+
+
+
+# Aggregate to Genus level
+physeq_genus <- tax_glom(physeq_rel, taxrank = "Genus")
+
+# Convert to long format
+genus_data <- psmelt(physeq_genus)
+
+# Calculate mean abundance for each Genus and select top 10
+top_10_genera <- genus_data %>%
+  group_by(genus) %>%
+  summarize(mean_abundance = mean(Abundance, na.rm = TRUE)) %>%
+  arrange(desc(mean_abundance)) %>%
+  slice_head(n = 10) %>%  # Keep only the top 10 genera
+  pull(genus)
+
+# Filter the data to include only the top 10 genera
+top10_genus_data <- genus_data %>% filter(genus %in% top_10_genera)
+
+# Plot relative abundance of top 10 genera
+ggplot(top10_genus_data, aes(x = Sample, y = Abundance, fill = genus)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(title = "Top 10 Dominant Genera by Sample",
+       x = "Sample",
+       y = "Relative Abundance (%)",
+       fill = "genus") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+
+##########CODE FOR FACETED plot
+# Add a factor level to ensure NT appears first
+genus_data$treatment <- factor(genus_data$treatment, levels = c("NT", setdiff(unique(genus_data$treatment), "NT")))
+
+# Filter for top 10 genera
+top10_genus_data <- genus_data %>% filter(genus %in% top_10_genera)
+
+# Plot faceted by treatment, with borders on facets
+ggplot(top10_genus_data, aes(x = Sample, y = Abundance, fill = genus)) +
+  geom_bar(stat = "identity", position = "stack") +
+  facet_wrap(~ treatment, scales = "free_x") +  # Facet by treatment
+  labs(title = "Top 10 Dominant Genera by Sample",
+       x = "Sample",
+       y = "Relative Abundance (%)",
+       fill = "genus") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    strip.text = element_text(size = 12, face = "bold"),  # Style facet labels
+    panel.border = element_rect(color = "black", fill = NA, size = 1)  # Add black borders around facets
+  )
+
+
+ggplot(top10_genus_data, aes(x = Sample, y = Abundance, fill = genus)) +
+  geom_bar(stat = "identity", position = "stack") +
+  facet_wrap(~ treatment, scales = "free_x", ncol = 6) +  # Facet in one column
+  labs(
+    title = "Top 10 Dominant Genera by Sample",
+    x = "Sample",
+    y = "Relative Abundance (%)",
+    fill = "Genus"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    strip.text = element_text(size = 12, face = "bold"),  # Style facet labels
+    panel.border = element_rect(color = "black", fill = NA, size = 1),  # Add black borders
+    legend.position = "bottom",  # Move legend to bottom
+    legend.title = element_text(size = 10, face = "bold"),  # Style legend title
+    legend.text = element_text(size = 9)  # Style legend text
+  )
+
+
+#LETS CORRECT THE TIMEPOINTS ORDER!!!!
+# Extract the time point from the Sample column
+top10_genus_data <- top10_genus_data %>%
+  mutate(
+    timepoint = sub(".*_(T[0-9]+)$", "\\1", Sample),  # Extract T1, T2, etc.
+    replicate = sub(".*_(T[0-9]+)_.*$", "\\1", Sample)  # Extract replicate if needed
+  )
+
+# Order Sample column by timepoint first, then replicate
+top10_genus_data <- top10_genus_data %>%
+  arrange(treatment, timepoint, Sample)  # Sort by treatment, timepoint, and Sample
+
+# Re-factor the Sample column based on the new order
+top10_genus_data$Sample <- factor(top10_genus_data$Sample, levels = unique(top10_genus_data$Sample))
+
+# Ensure treatment is properly ordered with NT first
+top10_genus_data$treatment <- factor(
+  top10_genus_data$treatment,
+  levels = c("NT", setdiff(unique(top10_genus_data$treatment), "NT"))
+)
+
+# Plot with correctly ordered samples and facets
+ggplot(top10_genus_data, aes(x = Sample, y = Abundance, fill = genus)) +
+  geom_bar(stat = "identity", position = "stack") +
+  facet_wrap(~ treatment, scales = "free_x", ncol = 6) +  # Facet in one column
+  labs(
+    title = "Top 10 Dominant Genera by Sample",
+    x = "Sample",
+    y = "Relative Abundance (%)",
+    fill = "Genus"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    strip.text = element_text(size = 12, face = "bold"),  # Style facet labels
+    panel.border = element_rect(color = "black", fill = NA, size = 1),  # Add black borders
+    legend.position = "bottom",  # Move legend to bottom
+    legend.title = element_text(size = 10, face = "bold"),  # Style legend title
+    legend.text = element_text(size = 9)  # Style legend text
+  )
+
+# Save the plot as a PNG file
+ggsave(
+  filename = "Top10_Genus_by_Treatment.jpg",  # File name
+  plot = last_plot(),                        # Use the last plotted ggplot
+  width = 12,                                # Width of the plot in inches
+  height = 8,                                # Height of the plot in inches
+  dpi = 300                                  # Resolution (dots per inch)
+)
+
+
+
+
+#QUICK PLOTTING
+# Keep only the top 10 taxa
+top_taxa <- names(sort(taxa_sums(physeq), decreasing = TRUE))[1:10]
+physeq_top <- prune_taxa(top_taxa, physeq_rel)
+
+# Plot bar chart
+plot_bar(physeq_top, fill = "phylum") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
