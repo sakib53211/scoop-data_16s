@@ -1,3 +1,4 @@
+```{r setup, include=FALSE}
 rm(list = ls())
 
 
@@ -20,10 +21,9 @@ rank_names(phy)   # Taxonomic ranks available
 sample_variables(phy) # Metadata variables
 
 #conversion to data frames for easy viewing
-otu_table_df <- as.data.frame(otu_table(phy)) # Convert to a data frame
-tax_table_df <- as.data.frame(tax_table(phy)) # Convert to a data frame
-sample_data_df <- as.data.frame(sample_data(phy)) # Convert to a data frame
-
+otu_table_df <- data.frame(otu_table(phy)) # Convert to a data frame
+tax_table_df <- data.frame(tax_table(phy)) # Convert to a data frame
+sample_data_df <- data.frame(sample_data(phy)) # Convert to a data frame
 
 # Remove the 'project.name' column #unnecessary column removal
 sample_data_df <- sample_data_df[, !(names(sample_data_df) %in% "project.name")]
@@ -64,12 +64,6 @@ sample_data_df$facet_group <- factor(sample_data_df$facet_group, levels = c("No 
 # Plot with facets
 library(ggplot2)
 
-# Add a column to distinguish "No Treatment" from other treatments
-sample_data_df$facet_group <- ifelse(sample_data_df$treatment == "NT", "No Treatment (NT)", sample_data_df$treatment)
-
-# Reorder the facets to place "No Treatment (NT)" first
-sample_data_df$facet_group <- factor(sample_data_df$facet_group, levels = c("No Treatment (NT)", "AE", "AN", "HT", "LIM", "SLS"))
-
 # Plot with facets
 ggplot(sample_data_df, aes(x = timepoint, y = shan.16s, fill = timepoint)) +
   geom_boxplot() +
@@ -92,12 +86,6 @@ ggsave(
   height = 7,                               # Height of the plot in inches
   dpi = 300                                 # Resolution of the image in DPI
 )
-
-
-class(sample_data_df)  # Should return "data.frame"
-
-# Convert sample_data to a proper data frame,This approach forces the sample_data to become a standard data.frame.
-sample_data_df <- data.frame(sample_data(phy))
 
 class(sample_data_df)  # Should now return "data.frame"
 
@@ -266,11 +254,8 @@ bray_dist <- as.dist(as.matrix(bray_dist)[!rownames(as.matrix(bray_dist)) %in% s
                                           !colnames(as.matrix(bray_dist)) %in% samples_to_remove])
 
 
-identical(rownames(sample_data_df), attr(bray_dist, "Labels"))  # Should return TRUE
-
-
 # Ensure sample_data_df is a data frame
-sample_data_df <- as.data.frame(sample_data(phy))
+sample_data_df <- data.frame(sample_data(phy))
 head(sample_data_df)
 
 adonis2(bray_dist ~ treatment, data = sample_data_df, permutations = 999)
@@ -510,3 +495,157 @@ physeq_top <- prune_taxa(top_taxa, physeq_rel)
 # Plot bar chart
 plot_bar(physeq_top, fill = "phylum") +
   theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+
+#>>>>>>>>>>>>>>ASV
+# Convert OTU table to presence/absence (1 = present, 0 = absent)
+otu_table_df[otu_table_df > 0] <- 1  
+
+#transpose otu table
+otu_table_df <- as.data.frame(t(otu_table_df))  # Transpose to correct format
+# Define samples to remove
+samples_to_remove <- c("SLS_A_T1_SO", "SLS_B_T1_SO", "SLS_C_T1_SO")
+
+# Remove these samples from the OTU table
+otu_table_df <- otu_table_df[ , !(colnames(otu_table_df) %in% samples_to_remove)]
+
+# Verify the samples were removed
+colnames(otu_table_df)
+
+# Count ASVs per sample (sum of 1s in each sample)
+asv_counts_per_sample <- colSums(otu_table_df)
+
+# Convert to a data frame
+asv_count_df <- data.frame(
+  sample.id = names(asv_counts_per_sample), 
+  ASV_Count = asv_counts_per_sample
+)
+
+# Ensure sample_data_df has the correct sample_id column
+asv_count_df <- left_join(asv_count_df, sample_data_df, by = "sample.id")
+
+# Summarize ASV counts per facet group
+asv_summary <- asv_count_df %>%
+  group_by(facet_group) %>%
+  summarize(Mean_ASVs = mean(ASV_Count), .groups = "drop")
+
+# Plot ASV counts per facet group
+ggplot(asv_summary, aes(x = facet_group, y = Mean_ASVs, fill = facet_group)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Number of ASVs per treatment Group",
+       x = "Facet Group",
+       y = "Mean ASV Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+ggsave(
+  filename = "ASV_Counts_Per_Facet_Group.jpg",  # File name
+  plot = last_plot(),                          # Use the last ggplot created
+  width = 10,                                  # Width in inches
+  height = 7,                                  # Height in inches
+  dpi = 300                                    # High-resolution image (300 DPI)
+)
+
+
+#>>>>>>MEAN+SE
+# Summarize ASV counts by timepoint and facet group, including Standard Error (SEM)
+asv_summary <- asv_count_df %>%
+  group_by(timepoint, facet_group) %>%
+  summarize(
+    Mean_ASVs = mean(ASV_Count, na.rm = TRUE),
+    SEM_ASVs = sd(ASV_Count, na.rm = TRUE) / sqrt(n()),  # Standard Error Calculation
+    .groups = "drop"
+  )
+
+
+
+ggplot(asv_summary, aes(x = timepoint, y = Mean_ASVs, fill = timepoint)) +
+  geom_bar(stat = "identity", position = position_dodge(0.8), width = 0.7) +  # Bar plot
+  geom_errorbar(aes(ymin = Mean_ASVs - SEM_ASVs, ymax = Mean_ASVs + SEM_ASVs), 
+                width = 0.2, position = position_dodge(0.8)) +  # SEM error bars
+  labs(
+    title = "ASV Counts Per Timepoint",
+    subtitle = "T1: Treatment | T2-T5: Storage Timepoints",
+    x = "Timepoint",
+    y = "Mean ASV Count"
+  ) +
+  facet_wrap(~ facet_group, ncol = 6, scales = "free_x") +  # Facet by NT and treatments
+  theme_minimal() +
+  theme(
+    strip.text = element_text(size = 12, face = "bold"),  # Style facet labels
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),  # Fix size -> linewidth
+    legend.position = "bottom"  # Move legend to bottom
+  )
+
+
+ggsave(
+  filename = "ASV_Counts_Per_Timepoint.png",
+  plot = last_plot(),
+  width = 12,  # Adjusted for better visibility
+  height = 8,
+  dpi = 300
+)
+
+
+#stat
+shapiro.test(asv_count_df$ASV_Count)
+#p < 0.05 → Data is not normal → Use Kruskal-Wallis & Wilcoxon tests.
+
+kruskal.test(ASV_Count ~ treatment, data = asv_count_df)  # Test across treatments
+#p-value = 0.006061
+
+kruskal.test(ASV_Count ~ timepoint, data = asv_count_df)  # Test across timepoints
+#p-value = 0.3412
+
+pairwise.wilcox.test(asv_count_df$ASV_Count, asv_count_df$treatment, p.adjust.method = "BH")  # Between treatments
+#NT vs liming has significant difference p=0.01
+#ASVs are similar in counts across trteatment except liming
+
+pairwise.wilcox.test(asv_count_df$ASV_Count, asv_count_df$timepoint, p.adjust.method = "BH")  # Between timepoints
+#but this is not making sense, as they counted all timepoints together
+
+
+
+ #to test if ASVs in No Treatment (T0) are different from specific treatments (AE, AN, etc.) at each timepoint (T1, T2, ...), we will:
+
+#Filter data for comparisons between T0 (No Treatment) and each treatment timepoint (e.g., AE_T1, AN_T1, etc.).
+#Perform pairwise Wilcoxon Rank-Sum Tests to compare ASV counts between T0 and each treatment at each timepoint.
+#Apply multiple testing correction (BH Correction).
+#Visualize significant differences with a grouped boxplot.
+
+# Ensure the sample_id structure includes both treatment and timepoint
+asv_filtered <- asv_count_df %>%
+  filter(timepoint %in% c("T0", "T1", "T2", "T3", "T4", "T5"))
+
+# Perform pairwise Wilcoxon tests for T0 vs. each Treatment-Timepoint combination
+wilcox_results <- pairwise.wilcox.test(asv_filtered$ASV_Count, 
+                                       interaction(asv_filtered$treatment, asv_filtered$timepoint),
+                                       p.adjust.method = "BH", exact = FALSE)
+
+# Convert Wilcoxon results to a readable data frame
+wilcox_df <- as.data.frame(wilcox_results$p.value) %>%
+  tibble::rownames_to_column(var = "Treatment_Timepoint_Comparison")
+
+# Print the formatted results
+print(wilcox_df)
+
+library(ggpubr)
+#Visualizing Differences: Boxplot with Statistical Significance
+ggplot(asv_filtered, aes(x = timepoint, y = ASV_Count, fill = treatment)) +
+  geom_boxplot() +
+  stat_compare_means(comparisons = list(c("T0", "AE_T1"), c("T0", "AN_T1"), c("T0", "HT_T1"),
+                                        c("T0", "LIM_T1"), c("T0", "SLS_T1"), 
+                                        c("T0", "AE_T2"), c("T0", "AN_T2"), c("T0", "HT_T2"),
+                                        c("T0", "LIM_T2"), c("T0", "SLS_T2")), 
+                     method = "wilcox.test", label = "p.signif") +  # Annotate p-values
+  labs(title = "ASV Counts: T0 vs. Specific Treatment-Timepoints",
+       subtitle = "Wilcoxon Test with BH Correction",
+       x = "Timepoint",
+       y = "ASV Count") +
+  theme_minimal() +
+  facet_wrap(~ treatment, ncol = 6, scales = "free_x")  # Facet by treatment
+
+#didnt save this plot, as I am not very interested in box plot for ASVs. however lets keept it for future reference.
+
+#>>>>>>>>>>>>>>ASV
